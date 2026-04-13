@@ -1,13 +1,111 @@
 'use client'
 import React,{useRef,useState,useEffect} from 'react';
 import toast from "react-hot-toast";
+import Link from 'next/link';
+import { useSession } from "next-auth/react";
 
 export default function Home() {
-  const [isUser,setisUser] = useState(false);
-  const [autoPaste, setAutoPaste] = useState(true);
+
+  const { data: session } = useSession();
+  const isUser = !!session;
+
+  const max_length=3;
+
+  const [url, seturl] = useState("")
+    const [shorturl, setshorturl] = useState("")
+    const [generated, setgenerated] = useState("")
+    const [copiedIndex, setCopiedIndex] = useState(null);
+    
+
+
+    const [autoPaste, setAutoPaste] = useState(true);
 
   const urlRef = useRef(null);
   const aliasRef = useRef(null);
+
+    const [links, setLinks] = useState([]);
+    const limitReached = links.length >= max_length ;
+
+
+    const generate = async () => {
+
+  if (!url) {
+    toast.error("Enter URL");
+    return;
+  }
+
+  // Guest limit check
+  if (!isUser) {
+    const stored = JSON.parse(localStorage.getItem("guestLinks")) || [];
+    if (stored.length >= 3) {
+      toast.error("Limit reached! Login for unlimited.");
+      return;
+    }
+  }
+
+  try {
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        url,
+        shorturl,
+        isUser
+      })
+    });
+
+    const result = await res.json();
+
+    if (!result.success) {
+      toast.error(result.message);
+      return;
+    }
+
+    const newShort = `${process.env.NEXT_PUBLIC_HOST}/${result.short}`;
+
+    // ✅ Save locally for guests
+    if (!isUser) {
+      const stored = JSON.parse(localStorage.getItem("guestLinks")) || [];
+
+      const updated = [
+        {
+          short: newShort,
+          original: url,
+          clicks: 0,
+          date: new Date().toLocaleDateString()
+        },
+        ...stored
+      ];
+
+      localStorage.setItem("guestLinks", JSON.stringify(updated));
+      setLinks(updated); // 🔥 THIS FIXES INSTANT UI UPDATE
+    }
+
+    setgenerated(newShort);
+    seturl("");
+    setshorturl("");
+
+    toast.success("Short URL created");
+
+  } catch (err) {
+    console.error(err);
+    toast.error("Error occurred");
+  }
+};
+
+
+useEffect(() => {
+  if (!isUser) {
+    const stored = JSON.parse(localStorage.getItem("guestLinks")) || [];
+    setLinks(stored);
+  }
+}, [isUser]);
+
+
+
+  
 
   useEffect(() => {
     if (!autoPaste) {
@@ -22,15 +120,29 @@ export default function Home() {
         const text = await navigator.clipboard.readText();
         if (text && urlRef.current) {
           urlRef.current.value = text;
-          toast.success("Pasted from clipboard ✅");
+          seturl(text);
+          toast.success("Pasted from clipboard");
         }
       } 
       catch (err) {
         console.error(err);
-        toast.error("Clipboard access denied. Paste manually ❌");
+        toast.error("Clipboard access denied. Paste manually");
       }
     };
     pasteFromClipboard();}, [autoPaste]);
+
+  const handleCopy = async (text, index) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIndex(index);
+      toast.success("Copied to clipboard!")
+      setTimeout(() => {
+        setCopiedIndex(null);
+      }, 1500);
+    } catch (err) {
+      toast.error("Failed to copy");
+    }
+  };
 
   return (
     <div>
@@ -50,16 +162,18 @@ export default function Home() {
             <div className='flex gap-3 p-5'>
               <img src="link.png" alt="link" />
               <p onClick={()=>urlRef.current.focus()}>Enter the link here</p>
-              <input ref={urlRef} type="text" className='outline-none text-pink-300 font-extralight w-75' />
+              <input ref={urlRef} type="text" className='outline-none text-pink-300 font-extralight w-75'
+              onChange={e =>{seturl(e.target.value)}} />
             </div>
 
             <div className='flex gap-3 '>
               <p onClick={()=>isUser && aliasRef.current.focus()}>Custom URL</p>
-              <input ref={aliasRef} disabled={!isUser} type="text" placeholder={isUser ? "" : "Login required"} className={` outline-none w-30 text-gray-400 ${isUser?"cursor-auto":"cursor-not-allowed"}`} />
+              <input ref={aliasRef} disabled={!isUser} type="text" placeholder={isUser ? "" : "Login required"} className={` outline-none w-30 text-gray-400 ${isUser?"cursor-auto":"cursor-not-allowed"}`}
+              onChange={e =>{setshorturl(e.target.value)}} />
             </div>
 
             <div className='mx-2'>
-              <button className="px-10 py-4 rounded-full bg-[#144EE3] text-white font-semibold text-sm hover:opacity-90 hover:scale-102 transition cursor-pointer">
+              <button onClick={generate} className="px-10 py-4 rounded-full bg-[#144EE3] text-white font-semibold text-sm hover:opacity-90 hover:scale-102 transition cursor-pointer">
                 Shorten Now!
               </button>
             </div>
@@ -82,15 +196,16 @@ export default function Home() {
           </div>
     
         <div className='mt-3'>
-          <p>You can create <span className='text-pink-500'>05</span> more links. Register Now to enjoy Unlimited usage</p>
+          <p>You can create <span className='text-pink-500'>{max_length-links.length}</span> more links. Register Now to enjoy Unlimited usage</p>
         </div>
         
+    
         
       </div>
 
-      <div className='mx-30 '>
+      <div className='mx-30 text-start '>
 
-        <div className='grid grid-cols-[2.3fr_3fr_1fr_1fr_1fr] gap-5 text-white bg-[#181E29] p-5  rounded-t-xl'>
+        <div className='grid grid-cols-[2fr_3fr_1fr_1fr_1fr] gap-10 text-white bg-[#181E29] p-5  rounded-t-xl items-center'>
           <div className="col1">Short Link</div>
           <div className="col2">Original Link</div>
           {/* <div className="col3">QR Code</div> */}
@@ -99,7 +214,49 @@ export default function Home() {
           <div className="col6">Date</div>
         </div>
 
+        {links.map((link, index) => (
+  <div key={index}
+    className='grid grid-cols-[2fr_3fr_1fr_1fr_1fr] gap-10 text-[#C9CED6] bg-[#181e296f] p-5 my-1 items-center'>
+
+    <div className='flex items-center justify-between'>
+      <Link href={link.short} target="_blank" className="text-blue-400">
+        {link.short}
+      </Link>
+      <button onClick={() => handleCopy(link.short, index)}>
+        <img src="copy.svg" alt="copy" className='bg-[#1C283F] p-2 rounded-full cursor-pointer '/> 
+      </button>
+
+    </div>
+
+    <div className="truncate">{link.original}</div>
+
+    <div>{link.clicks}</div>
+
+    <div className="text-green-400">Active</div>
+
+    <div>{link.date}</div>
+
+  </div>
+))}
+
       </div>
+
+      {/* 🔥 Blur Overlay (when limit reached) */}
+  {limitReached && (
+    <div className="absolute bottom-0 left-0 w-full p-10 ">
+      
+      {/* Blur layer */}
+      <div className="absolute inset-0 backdrop-blur-md bg-linear-to-t from-[#0f172a] to-transparent" />
+
+      {/* Optional message */}
+      <div className="relative flex items-center justify-center h-full text-white font-medium">
+  <Link href="/register" className="text-blue-400 underline cursor-pointer">
+    Register Now
+  </Link>
+  <span className="ml-1">to enjoy unlimited history</span>
+</div>
+    </div>
+  )}
 
     </div>
   </div>
